@@ -35,6 +35,13 @@
        
     .PARAMETER PoolName
     The name of the elastic pool in which the destination database will be restored too
+    
+    .PARAMETER UserToCreateOnDestination
+    The name of theuser to create on destination database
+
+    .PARAMETER LoginUserToCreateUserFrom
+    The name of the login to user to create from on destination database
+    
   
 
 
@@ -67,7 +74,13 @@
         [String]$SQlCredential,
         [Parameter(Mandatory=$True)]  
       	[ValidateNotNullOrEmpty()] 
-        [String]$PoolName
+        [String]$PoolName,
+        [Parameter(Mandatory=$True)]  
+      	[ValidateNotNullOrEmpty()] 
+        [String]$UserToCreateOnDestination,
+        [Parameter(Mandatory=$True)]  
+      	[ValidateNotNullOrEmpty()] 
+        [String]$LoginUserToCreateUserFrom
       	
 	)
        $myCredential = Get-AutomationPSCredential -Name $SQlCredential
@@ -101,12 +114,13 @@
         		throw $_.Exception
     		}
 		}
-    		
+    		#Set the point in time to restore too and the target database
     		
  		
-    		
+    		 $sourceDB =Get-AzureRmSqlDatabase -ResourceGroupName $ResourceGroupName -ServerName $SourceServerName -DatabaseName $SourceDatabaseName
+    $destDB=Get-AzureRmSqlElasticPool -ResourceGroupName $DestResourceGroupName -ServerName $DestServerName -ElasticPoolName $PoolName
     
-      If ($DestServerName -Match $SourceServerName ) {
+      If ($sourceDB.Edition -Match $destDB.Edition ) {
          Write-Output "Creating new copy of Database into pool"  
          New-AzureRmSqlDatabaseCopy -CopyDatabaseName $DestDatabaseTempName	-DatabaseName $SourceDatabaseName -CopyResourceGroupName $DestResourceGroupName  -CopyServerName $DestServerName 	-ResourceGroupName $ResourceGroupName	-ServerName $SourceServerName -ElasticPoolName $PoolName
 	   }
@@ -120,19 +134,45 @@
          }
     	
          Write-Output "Finished creating new copy of database"
-    	 $connectionString = "Server=tcp:"+$DestServerName+".database.windows.net,1433;Initial Catalog=master;Persist Security Info=False;User ID="+$username+";Password="+$password+";MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=3000;"
-    		
+    
       	Write-Output "Deleting old  database"
        	Remove-AzureRmSqlDatabase -DatabaseName $DestDatabaseName -ResourceGroupName $DestResourceGroupName -ServerName $DestServerName -Force
    		Start-Sleep -Seconds 120
-    	$connection = new-object system.data.SqlClient.SQLConnection($connectionString)
+    	
     
-    	Write-Output "Renaming"
+    	Write-Output "Creating users and renaming"
+      
+
+        $connectionString = "Server=tcp:"+$DestServerName+".database.windows.net,1433;Initial Catalog="+$DestDatabaseTempName+";Persist Security Info=False;User ID="+$username+";Password="+$password+";MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=3000;"
+    	$connection = new-object system.data.SqlClient.SQLConnection($connectionString)
+    	$sqlCommand="CREATE USER "+$UserToCreateOnDestination+" FROM LOGIN "+$LoginUserToCreateUserFrom+";"
+    	$command = new-object system.data.sqlclient.sqlcommand($sqlCommand,$connection)
+
+      	$connection.Open()
+
+     	$command.ExecuteNonQuery();
+        $command.CommandText="EXEC sys.sp_addrolemember 'db_datareader','"+$UserToCreateOnDestination+"'"
+        $command.ExecuteNonQuery();
+        $command.CommandText="EXEC sys.sp_addrolemember 'db_datawriter','"+$UserToCreateOnDestination+"'"
+        $command.ExecuteNonQuery();
+  $command.CommandText="EXEC sys.sp_addrolemember 'db_ddladmin','"+$UserToCreateOnDestination+"'"
+        $command.ExecuteNonQuery();
+   
+         $command.CommandText="EXEC sys.sp_addrolemember 'db_executor','"+$UserToCreateOnDestination+"'"
+        $command.ExecuteNonQuery();
+
+    
+    	$connection.Close()
+
+        $connectionString = "Server=tcp:"+$DestServerName+".database.windows.net,1433;Initial Catalog=master;Persist Security Info=False;User ID="+$username+";Password="+$password+";MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=3000;"
+    	$connection = new-object system.data.SqlClient.SQLConnection($connectionString)
     	$sqlCommand="ALTER DATABASE ["+$DestDatabaseTempName+"] MODIFY  NAME = ["+$DestDatabaseName+"]"
     	$command = new-object system.data.sqlclient.sqlcommand($sqlCommand,$connection)
-      	$connection.Open()
-     	$command.ExecuteNonQuery();
-    	$connection.Close()
+        $connection.Open()
+        
+        $command.ExecuteNonQuery();
+     
+        $connection.Close()
 
   		Write-Output "Complete" 		
 		
