@@ -1,0 +1,11 @@
+﻿{
+  "bindings": [
+    {
+      "type": "timerTrigger",
+      "name": "RebuildNight",
+      "schedule": "0 0 1-6 * * *",
+      "direction": "in"
+    }
+  ],
+  "disabled": false
+}
